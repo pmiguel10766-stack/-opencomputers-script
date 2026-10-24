@@ -1,6 +1,6 @@
 -- Nitro OS Installer (installer.lua) - visual v2
 -- Troque SEU_USUARIO pelo seu usuario do GitHub.
-local BASE = "https://raw.githubusercontent.com/pmiguel10766-stack/Atualizar_Nitro_OS/main/"
+local BASE = "https://raw.githubusercontent.com/pmiguel10766-stack/-opencomputers-script/refs/heads/main/"
 
 local cl, cp = component, computer
 local gpu = cl.proxy(cl.list("gpu")())
@@ -154,6 +154,14 @@ local langs = {
     noNet = "Sem Internet Card",
     fail = "Falha na instalação",
     failKeys = "Enter Tentar de novo  Bksp Voltar",
+    edTitle = "Escolha a versão do Nitro OS",
+    edLegacy = "Nitro OS Legado",
+    edLegacyDesc = "v6.5, o sistema antigo (arquivo único)",
+    edPro = "Nitro OS Pro",
+    edProDesc = "Completo: Arquivos, Notas, Impressora 3D, Ajustes",
+    edGo = "Nitro OS Go (mais rápido)",
+    edGoDesc = "Leve: abre mais rápido, poucos apps e efeitos",
+    edKeys = "↑↓ Escolher  Enter OK  Bksp Voltar",
     errTitle = "ERRO FATAL DO SISTEMA",
     errTitleApp = "ERRO NO SISTEMA",
     errContinue = "Enter Continuar",
@@ -184,6 +192,14 @@ local langs = {
     noNet = "No Internet Card",
     fail = "Installation failed",
     failKeys = "Enter Try again  Bksp Back",
+    edTitle = "Choose the Nitro OS version",
+    edLegacy = "Nitro OS Legacy",
+    edLegacyDesc = "v6.5, the old system (single file)",
+    edPro = "Nitro OS Pro",
+    edProDesc = "Full: Files, Notes, 3D Printer, Settings",
+    edGo = "Nitro OS Go (faster)",
+    edGoDesc = "Light: boots faster, few apps and effects",
+    edKeys = "↑↓ Select  Enter OK  Bksp Back",
     errTitle = "FATAL SYSTEM ERROR",
     errTitleApp = "SYSTEM ERROR",
     errContinue = "Enter Continue",
@@ -379,7 +395,8 @@ end
 ---------------------------------------------------------------- download
 local function download(path)
   if not net then return nil, T.noNet end
-  local req, err = net.request(BASE .. path)
+  local url = path:match("^https?://") and path or (BASE .. path)
+  local req, err = net.request(url)
   if not req then return nil, tostring(err) end
   local limit = cp.uptime() + 20
   local data = ""
@@ -397,6 +414,46 @@ local function download(path)
   pcall(req.close)
   if not ok then return nil, tostring(e) end
   return data
+end
+
+local EDITIONS = {
+  { id = "legado", name = "edLegacy", desc = "edLegacyDesc" },
+  { id = "pro", name = "edPro", desc = "edProDesc" },
+  { id = "go", name = "edGo", desc = "edGoDesc" },
+}
+
+local function chooseEdition()
+  local sel = 2
+  local function draw()
+    frame(2, T.edTitle)
+    for i, e in ipairs(EDITIONS) do
+      local y = py + 2 + (i - 1) * 3
+      if i == sel then
+        rect(cx - 1, y, cw + 2, 2, C.accent)
+        put(cx, y, "▶ " .. T[e.name], C.bg, C.accent, cw)
+        put(cx + 2, y + 1, T[e.desc], C.bg, C.accent, cw - 2)
+      else
+        put(cx, y, "  " .. T[e.name], C.text, C.panel, cw)
+        put(cx + 2, y + 1, T[e.desc], C.dim, C.panel, cw - 2)
+      end
+    end
+    footer(T.edKeys)
+  end
+  draw()
+  while true do
+    local k = key()
+    if k == 200 and sel > 1 then
+      sel = sel - 1
+      draw()
+    elseif k == 208 and sel < #EDITIONS then
+      sel = sel + 1
+      draw()
+    elseif k == 28 then
+      return EDITIONS[sel].id
+    elseif k == 14 then
+      return nil
+    end
+  end
 end
 
 ---------------------------------------------------------------- tela 3: instalar
@@ -420,7 +477,34 @@ local function status(text)
   put(cx, py + ph - 3, text, C.dim, C.panel, cw)
 end
 
-local function install(target)
+local LEGACY_URL = "https://raw.githubusercontent.com/pmiguel10766-stack/-opencomputers-script/refs/heads/main/Nitro_OS_Legado.lua"
+
+local function installLegacy(target)
+  status(T.downloading .. "Nitro_OS_Legado.lua")
+  local data, err = download(LEGACY_URL)
+  if not data then return false, tostring(err), 205 end
+  bar(py + 3, T.check, 100)
+  if #data == 0 or data:sub(1, 3) == "404" or not load(data, "=Nitro_OS_Legado") then
+    return false, "Nitro_OS_Legado.lua", 203
+  end
+  local fs = cl.proxy(target)
+  local hnd = fs.open("/init.lua", "w")
+  if not hnd then return false, "/init.lua", 205 end
+  fs.write(hnd, data)
+  fs.close(hnd)
+  bar(py + 6, T.copy, 70)
+  -- o marcador faz o Legado abrir direto, sem tentar se atualizar sozinho no primeiro boot
+  local marker = fs.open("/.nitro_installed", "w")
+  if marker then
+    fs.write(marker, "installed=true\nlang=PT-BR\nuser=Admin\nurl=" .. LEGACY_URL)
+    fs.close(marker)
+  end
+  bar(py + 6, T.copy, 100)
+  status("")
+  return true
+end
+
+local function install(target, edition)
   frame(3, T.installing)
   footer("Nitro OS")
   bar(py + 3, T.check, 0)
@@ -428,6 +512,7 @@ local function install(target)
   if cp.freeMemory() < 30000 then
     return false, string.format("RAM livre: %d KB", math.floor(cp.freeMemory() / 1024)), 204
   end
+  if edition == "legado" then return installLegacy(target) end
   status(T.downloading .. "files.txt")
 
   local list, err = download("files.txt")
@@ -457,6 +542,13 @@ local function install(target)
     fs.write(hnd, data)
     fs.close(hnd)
     bar(py + 6, T.copy, math.floor(i * 100 / #files))
+  end
+  -- grava a edicao escolhida (pro ou go) para o boot.lua ler
+  fs.makeDirectory("/nitro")
+  local ed = fs.open("/nitro/edition", "w")
+  if ed then
+    fs.write(ed, edition or "pro")
+    fs.close(ed)
   end
   status("")
   return true
@@ -531,14 +623,17 @@ while true do
   while true do
     local target = chooseDisk()
     if not target then break end
-    local ok, err, code = install(target)
-    while not ok do
-      if not errorScreen(code or 208, err) then break end
-      ok, err, code = install(target)
-    end
-    if ok then
-      restartScreen()
-      return
+    local edition = chooseEdition()
+    if edition then
+      local ok, err, code = install(target, edition)
+      while not ok do
+        if not errorScreen(code or 208, err) then break end
+        ok, err, code = install(target, edition)
+      end
+      if ok then
+        restartScreen()
+        return
+      end
     end
   end
 end
