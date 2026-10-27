@@ -1,6 +1,6 @@
 -- Nitro OS Installer (installer.lua) - visual v2
 -- Troque SEU_USUARIO pelo seu usuario do GitHub.
-local BASE = "https://raw.githubusercontent.com/pmiguel10766-stack/-opencomputers-script/refs/heads/main/"
+local BASE = "https://raw.githubusercontent.com/pmiguel10766-stack/Atualizar_Nitro_OS/main/"
 
 local cl, cp = component, computer
 local gpu = cl.proxy(cl.list("gpu")())
@@ -393,27 +393,40 @@ local function chooseDisk()
 end
 
 ---------------------------------------------------------------- download
-local function download(path)
+local function downloadOnce(url, timeout)
   if not net then return nil, T.noNet end
-  local url = path:match("^https?://") and path or (BASE .. path)
   local req, err = net.request(url)
   if not req then return nil, tostring(err) end
-  local limit = cp.uptime() + 20
-  local data = ""
+  local limit = cp.uptime() + timeout
+  local parts = {}
   local ok, e = pcall(function()
     while not req.finishConnect() do
-      if cp.uptime() > limit then error("Timeout") end
-      cp.pullSignal(0)
+      if cp.uptime() > limit then error("Timeout", 0) end
+      cp.pullSignal(0.05)
     end
+    local code = req.response()
+    if code and code >= 400 then error("HTTP " .. code, 0) end
     while true do
       local c = req.read(math.huge)
       if not c then break end
-      data = data .. c
+      parts[#parts + 1] = c
     end
   end)
   pcall(req.close)
   if not ok then return nil, tostring(e) end
-  return data
+  return table.concat(parts)
+end
+
+-- tenta 2 vezes (30 s cada); erro HTTP 4xx nao adianta repetir. O erro mostra o link usado.
+local function download(path)
+  local url = path:match("^https?://") and path or (BASE .. path)
+  local data, err
+  for attempt = 1, 2 do
+    data, err = downloadOnce(url, 30)
+    if data then return data end
+    if tostring(err):find("HTTP 4", 1, true) then break end
+  end
+  return nil, tostring(err) .. " (" .. url .. ")"
 end
 
 local EDITIONS = {
