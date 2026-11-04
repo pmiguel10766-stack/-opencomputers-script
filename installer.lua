@@ -430,13 +430,12 @@ local function download(path)
 end
 
 local EDITIONS = {
-  { id = "legado", name = "edLegacy", desc = "edLegacyDesc" },
   { id = "pro", name = "edPro", desc = "edProDesc" },
   { id = "go", name = "edGo", desc = "edGoDesc" },
 }
 
 local function chooseEdition()
-  local sel = 2
+  local sel = 1
   local function draw()
     frame(2, T.edTitle)
     for i, e in ipairs(EDITIONS) do
@@ -490,33 +489,6 @@ local function status(text)
   put(cx, py + ph - 3, text, C.dim, C.panel, cw)
 end
 
-local LEGACY_URL = "https://raw.githubusercontent.com/pmiguel10766-stack/-opencomputers-script/refs/heads/main/Nitro_OS_Legado.lua"
-
-local function installLegacy(target)
-  status(T.downloading .. "Nitro_OS_Legado.lua")
-  local data, err = download(LEGACY_URL)
-  if not data then return false, tostring(err), 205 end
-  bar(py + 3, T.check, 100)
-  if #data == 0 or data:sub(1, 3) == "404" or not load(data, "=Nitro_OS_Legado") then
-    return false, "Nitro_OS_Legado.lua", 203
-  end
-  local fs = cl.proxy(target)
-  local hnd = fs.open("/init.lua", "w")
-  if not hnd then return false, "/init.lua", 205 end
-  fs.write(hnd, data)
-  fs.close(hnd)
-  bar(py + 6, T.copy, 70)
-  -- o marcador faz o Legado abrir direto, sem tentar se atualizar sozinho no primeiro boot
-  local marker = fs.open("/.nitro_installed", "w")
-  if marker then
-    fs.write(marker, "installed=true\nlang=PT-BR\nuser=Admin\nurl=" .. LEGACY_URL)
-    fs.close(marker)
-  end
-  bar(py + 6, T.copy, 100)
-  status("")
-  return true
-end
-
 local function install(target, edition)
   frame(3, T.installing)
   footer("Nitro OS")
@@ -525,7 +497,6 @@ local function install(target, edition)
   if cp.freeMemory() < 30000 then
     return false, string.format("RAM livre: %d KB", math.floor(cp.freeMemory() / 1024)), 204
   end
-  if edition == "legado" then return installLegacy(target) end
   status(T.downloading .. "files.txt")
 
   local list, err = download("files.txt")
