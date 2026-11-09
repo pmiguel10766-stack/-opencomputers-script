@@ -2,7 +2,7 @@ local c,p=component,computer
 local B="https://raw.githubusercontent.com/pmiguel10766-stack/Atualizar_Nitro_OS/main/"
 local L=B.."BIOS/BIOS_GUI.lua"
 local I="https://raw.githubusercontent.com/pmiguel10766-stack/-opencomputers-script/refs/heads/main/installer.lua"
-local HASH=2930051896
+local HASH=3012683437
 local G=c.list("gpu")()
 local S=c.list("screen")()
 local g=G and c.proxy(G)
@@ -109,7 +109,7 @@ local function layout()
   if not ok2 then return "Erro no layout: "..tostring(e2) end
   return nil
 end
-msg("Nitro BIOS",0x00FF00)
+msg("Nitro BIOS",0xFF2D2D)
 local k
 local t=p.uptime()+3
 while p.uptime()<t do
