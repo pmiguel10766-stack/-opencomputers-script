@@ -1,9 +1,17 @@
--- instalacao.lua - Instalador do Plasma OS (sem OpenOS, com interface)
+-- instalador.lua - Instalador do Plasma OS (sem OpenOS, com interface)
+-- Baixa files.txt do GitHub e copia cada arquivo listado para o disco escolhido.
+-- init.lua vai para a raiz do disco. O resto vai para /PlasmaOS/.
+
 local REPO = "https://raw.githubusercontent.com/pmiguel10766-stack/Plasma_OS/main/"
+local SYSTEM_DIR = "/PlasmaOS/"
+local TIMEOUT = 30
+
+-- Tela ----------------------------------------------------------------------
 
 local gpuAddr = component.list("gpu")()
 local scrAddr = component.list("screen")()
 if not gpuAddr or not scrAddr then error("Precisa de GPU e tela.") end
+
 local gpu = component.proxy(gpuAddr)
 gpu.bind(scrAddr)
 local mw, mh = gpu.maxResolution()
@@ -23,20 +31,29 @@ local PY = math.floor((H - PH) / 2) + 1
 local state = { screen = "welcome", disks = {}, sel = 1, pct = 0, file = "", err = "" }
 local buttons = {}
 
--- Rede -------------------------------------------------------------------
+-- Rede ----------------------------------------------------------------------
 
-local function ask(path)
-  local inet = component.list("internet")()
-  if not inet then return nil, "sem placa de internet" end
-  local net = component.proxy(inet)
+local function download(path)
+  local inetAddr = component.list("internet")()
+  if not inetAddr then return nil, "sem placa de internet" end
+
+  local net = component.proxy(inetAddr)
   local ok, handle = pcall(net.request, REPO .. path)
   if not ok or not handle then return nil, tostring(handle) end
 
   local parts = {}
+  local started = computer.uptime()
   while true do
+    if computer.uptime() - started > TIMEOUT then
+      handle:close()
+      return nil, "tempo esgotado (" .. TIMEOUT .. "s)"
+    end
     local chunk, reason = handle:read(math.huge)
     if not chunk then
-      if reason then handle:close(); return nil, tostring(reason) end
+      if reason then
+        handle:close()
+        return nil, tostring(reason)
+      end
       break
     end
     parts[#parts + 1] = chunk
@@ -49,7 +66,7 @@ local function ask(path)
   return data
 end
 
--- Disco ------------------------------------------------------------------
+-- Disco ---------------------------------------------------------------------
 
 local function listDisks()
   local out = {}
@@ -85,13 +102,19 @@ local function writeFile(fs, path, data)
   return true
 end
 
--- Instalação -------------------------------------------------------------
+-- Destino de cada arquivo: init.lua vai para a raiz, o resto vai para /PlasmaOS/
+local function destFor(path)
+  if path == "init.lua" then return "/init.lua" end
+  return SYSTEM_DIR .. path
+end
+
+-- Instalação ----------------------------------------------------------------
 
 local function install(addr, progress)
   local fs = component.proxy(addr)
 
   progress(0, "files.txt")
-  local listRaw, e = ask("files.txt")
+  local listRaw, e = download("files.txt")
   if not listRaw then return false, "files.txt: " .. tostring(e) end
 
   local files = {}
@@ -104,7 +127,7 @@ local function install(addr, progress)
   for i, path in ipairs(files) do
     progress((i - 1) / #files, path)
 
-    local data, e2 = ask(path)
+    local data, e2 = download(path)
     if not data then return false, path .. ": " .. tostring(e2) end
 
     if path:sub(-4) == ".lua" then
@@ -112,17 +135,19 @@ local function install(addr, progress)
       if not fn then return false, path .. " com erro: " .. tostring(le) end
     end
 
-    local dest = (path == "init.lua") and "/init.lua" or ("/plasma/" .. path)
+    local dest = destFor(path)
     local ok, e3 = writeFile(fs, dest, data)
     if not ok then return false, dest .. ": " .. tostring(e3) end
   end
 
-  writeFile(fs, "/plasma/files.txt", listRaw)
+  local ok, e4 = writeFile(fs, SYSTEM_DIR .. "files.txt", listRaw)
+  if not ok then return false, "files.txt local: " .. tostring(e4) end
+
   progress(1, "concluído")
   return true
 end
 
--- Interface --------------------------------------------------------------
+-- Interface -----------------------------------------------------------------
 
 local function fillBox(x, y, w, h, color)
   gpu.setBackground(color)
@@ -244,34 +269,56 @@ local function runInstall(addr)
   end
 end
 
--- Principal --------------------------------------------------------------
+-- Ações ---------------------------------------------------------------------
+
+local function activate(id)
+  local s = state.screen
+  if s == "welcome" and id == "next" then
+    go("disk")
+  elseif s == "disk" and id == "install" then
+    if #state.disks > 0 then runInstall(state.disks[state.sel].addr) end
+  elseif s == "done" and id == "reboot" then
+    computer.shutdown(true)
+  elseif s == "error" and id == "back" then
+    go("disk")
+  end
+end
+
+-- Botão principal de cada tela, ativado pelo Enter
+local function primaryId()
+  local s = state.screen
+  if s == "welcome" then return "next" end
+  if s == "disk" then return "install" end
+  if s == "done" then return "reboot" end
+  if s == "error" then return "back" end
+  return nil
+end
+
+local ENTER_KEYS = { [28] = true, [156] = true }
+
+-- Principal -----------------------------------------------------------------
 
 draw()
 while true do
-  local sig, _, x, y = computer.pullSignal()
+  local sig, _, a, b = computer.pullSignal()
+
   if sig == "touch" then
+    local x, y = a, b
     local id = hitButton(x, y)
-    local s = state.screen
-
-    if s == "welcome" and id == "next" then
-      go("disk")
-
-    elseif s == "disk" then
-      if id == "install" then
-        if #state.disks > 0 then runInstall(state.disks[state.sel].addr) end
-      else
-        local i = y - (PY + 2)
-        if i >= 1 and i <= #state.disks then
-          state.sel = i
-          draw()
-        end
+    if id then
+      activate(id)
+    elseif state.screen == "disk" then
+      local i = y - (PY + 2)
+      if i >= 1 and i <= #state.disks then
+        state.sel = i
+        draw()
       end
+    end
 
-    elseif s == "done" and id == "reboot" then
-      computer.shutdown(true)
-
-    elseif s == "error" and id == "back" then
-      go("disk")
+  elseif sig == "key_down" then
+    if ENTER_KEYS[b] then
+      local id = primaryId()
+      if id then activate(id) end
     end
   end
 end
