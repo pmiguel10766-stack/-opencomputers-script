@@ -41,22 +41,31 @@ local function download(path)
   local ok, handle = pcall(net.request, REPO .. path)
   if not ok or not handle then return nil, tostring(handle) end
 
-  local parts = {}
   local started = computer.uptime()
+
+  while not handle:finishConnect() do
+    if computer.uptime() - started > TIMEOUT then
+      handle:close()
+      return nil, "tempo esgotado ao conectar"
+    end
+    computer.pullSignal(0.1)
+  end
+
+  local parts = {}
   while true do
     if computer.uptime() - started > TIMEOUT then
       handle:close()
-      return nil, "tempo esgotado (" .. TIMEOUT .. "s)"
+      return nil, "tempo esgotado ao baixar"
     end
-    local chunk, reason = handle:read(math.huge)
-    if not chunk then
-      if reason then
-        handle:close()
-        return nil, tostring(reason)
-      end
+    local chunk, reason = handle:read(2048)
+    if chunk then
+      parts[#parts + 1] = chunk
+    elseif reason then
+      handle:close()
+      return nil, tostring(reason)
+    else
       break
     end
-    parts[#parts + 1] = chunk
   end
   handle:close()
 
@@ -102,7 +111,6 @@ local function writeFile(fs, path, data)
   return true
 end
 
--- Destino de cada arquivo: init.lua vai para a raiz, o resto vai para /PlasmaOS/
 local function destFor(path)
   if path == "init.lua" then return "/init.lua" end
   return SYSTEM_DIR .. path
@@ -284,7 +292,6 @@ local function activate(id)
   end
 end
 
--- Botão principal de cada tela, ativado pelo Enter
 local function primaryId()
   local s = state.screen
   if s == "welcome" then return "next" end
@@ -303,12 +310,11 @@ while true do
   local sig, _, a, b = computer.pullSignal()
 
   if sig == "touch" then
-    local x, y = a, b
-    local id = hitButton(x, y)
+    local id = hitButton(a, b)
     if id then
       activate(id)
     elseif state.screen == "disk" then
-      local i = y - (PY + 2)
+      local i = b - (PY + 2)
       if i >= 1 and i <= #state.disks then
         state.sel = i
         draw()
