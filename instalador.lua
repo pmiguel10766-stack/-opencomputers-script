@@ -1,5 +1,5 @@
 -- instalacao.lua - Instalador do Plasma OS (sem OpenOS, com interface)
-local REPO = "https://raw.githubusercontent.com/SEU_USUARIO/Plasma_OS/main/"
+local REPO = "https://raw.githubusercontent.com/pmiguel10766-stack/Plasma_OS/main/"
 
 local gpuAddr = component.list("gpu")()
 local scrAddr = component.list("screen")()
