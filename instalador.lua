@@ -1,10 +1,11 @@
--- instalador.lua - Instalador do Plasma OS (sem OpenOS, com interface)
+-- instalador.lua - Instalador do Plasma OS (compatível com todas as versões do OpenComputers)
 -- Baixa files.txt do GitHub e copia cada arquivo listado para o disco escolhido.
 -- init.lua vai para a raiz do disco. O resto vai para /PlasmaOS/.
 
 local REPO = "https://raw.githubusercontent.com/pmiguel10766-stack/Plasma_OS/main/"
 local SYSTEM_DIR = "/PlasmaOS/"
 local TIMEOUT = 30
+local BLOCK = 2048
 
 -- Tela ----------------------------------------------------------------------
 
@@ -38,14 +39,20 @@ local function download(path)
   if not inetAddr then return nil, "sem placa de internet" end
 
   local net = component.proxy(inetAddr)
-  local ok, handle = pcall(net.request, REPO .. path)
-  if not ok or not handle then return nil, tostring(handle) end
+  local okReq, handle = pcall(net.request, REPO .. path)
+  if not okReq or not handle then return nil, "request: " .. tostring(handle) end
 
   local started = computer.uptime()
 
-  while not handle:finishConnect() do
+  while true do
+    local okC, ready = pcall(handle.finishConnect, handle)
+    if not okC then
+      pcall(handle.close, handle)
+      return nil, "conexão: " .. tostring(ready)
+    end
+    if ready then break end
     if computer.uptime() - started > TIMEOUT then
-      handle:close()
+      pcall(handle.close, handle)
       return nil, "tempo esgotado ao conectar"
     end
     computer.pullSignal(0.1)
@@ -54,20 +61,24 @@ local function download(path)
   local parts = {}
   while true do
     if computer.uptime() - started > TIMEOUT then
-      handle:close()
+      pcall(handle.close, handle)
       return nil, "tempo esgotado ao baixar"
     end
-    local chunk, reason = handle:read(2048)
+    local okR, chunk, reason = pcall(handle.read, handle, BLOCK)
+    if not okR then
+      pcall(handle.close, handle)
+      return nil, "leitura: " .. tostring(chunk)
+    end
     if chunk then
       parts[#parts + 1] = chunk
     elseif reason then
-      handle:close()
+      pcall(handle.close, handle)
       return nil, tostring(reason)
     else
       break
     end
   end
-  handle:close()
+  pcall(handle.close, handle)
 
   local data = table.concat(parts)
   if data == "" then return nil, "arquivo vazio" end
@@ -83,11 +94,14 @@ local function listDisks()
   for addr in component.list("filesystem") do
     if addr ~= tmp then
       local p = component.proxy(addr)
-      if not p.isReadOnly() then
+      local okRO, ro = pcall(p.isReadOnly)
+      if okRO and not ro then
+        local okL, label = pcall(p.getLabel)
+        local okS, total = pcall(p.spaceTotal)
         out[#out + 1] = {
           addr = addr,
-          label = p.getLabel() or addr:sub(1, 8),
-          kb = math.floor(p.spaceTotal() / 1024),
+          label = (okL and label) or addr:sub(1, 8),
+          kb = okS and math.floor(total / 1024) or 0,
         }
       end
     end
@@ -104,10 +118,10 @@ local function writeFile(fs, path, data)
       if not fs.exists(acc) then fs.makeDirectory(acc) end
     end
   end
-  local h, e = fs.open(path, "w")
-  if not h then return false, e end
-  fs.write(h, data)
-  fs.close(h)
+  local okO, h, e = pcall(fs.open, path, "w")
+  if not okO or not h then return false, tostring(h or e) end
+  pcall(fs.write, h, data)
+  pcall(fs.close, h)
   return true
 end
 
@@ -224,7 +238,7 @@ local function draw()
   elseif s == "progress" then
     frame("Instalando o Plasma OS")
     center(PY + 3, "Copiando arquivos...")
-    center(PY + 5, state.file:sub(1, PW - 4), C.dim)
+    center(PY + 5, tostring(state.file):sub(1, PW - 4), C.dim)
     local bw = PW - 8
     local bx = PX + 4
     local by = PY + 7
@@ -241,7 +255,7 @@ local function draw()
   elseif s == "error" then
     frame("Erro na instalação")
     center(PY + 4, "Não foi possível concluir.", C.err)
-    center(PY + 6, state.err:sub(1, PW - 4), C.dim)
+    center(PY + 6, tostring(state.err):sub(1, PW - 4), C.dim)
     button("back", "Tentar de novo", PH - 3, true)
   end
 end
