@@ -43,39 +43,35 @@ local function download(path)
   if not okReq or not handle then return nil, "request: " .. tostring(handle) end
 
   local started = computer.uptime()
-
-  while true do
-    local okC, ready = pcall(handle.finishConnect, handle)
-    if not okC then
-      pcall(handle.close, handle)
-      return nil, "conexão: " .. tostring(ready)
-    end
-    if ready then break end
-    if computer.uptime() - started > TIMEOUT then
-      pcall(handle.close, handle)
-      return nil, "tempo esgotado ao conectar"
-    end
-    computer.pullSignal(0.1)
-  end
-
   local parts = {}
+
   while true do
     if computer.uptime() - started > TIMEOUT then
       pcall(handle.close, handle)
-      return nil, "tempo esgotado ao baixar"
+      return nil, "tempo esgotado"
     end
+
+    local okF, done = pcall(handle.finishConnect, handle)
+    if not okF then
+      pcall(handle.close, handle)
+      return nil, "conexão: " .. tostring(done)
+    end
+
     local okR, chunk, reason = pcall(handle.read, handle, BLOCK)
     if not okR then
       pcall(handle.close, handle)
       return nil, "leitura: " .. tostring(chunk)
     end
+
     if chunk then
       parts[#parts + 1] = chunk
     elseif reason then
       pcall(handle.close, handle)
       return nil, tostring(reason)
-    else
+    elseif done then
       break
+    else
+      computer.pullSignal(0.1)
     end
   end
   pcall(handle.close, handle)
