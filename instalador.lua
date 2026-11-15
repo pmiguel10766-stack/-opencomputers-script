@@ -41,6 +41,98 @@ local function mix(c1, c2, t)
        + math.floor(b1 + (b2 - b1) * t)
 end
 
+-- Tela de carregamento (logo + barra fina) ------------------------------
+-- Logo: Júpiter (faixas de cor, Grande Mancha Vermelha, sombra) com um "P" azul
+-- 12x12 pixels = 12x6 células com meios-blocos
+local ORB_P = {
+  "####.",
+  "#...#",
+  "#...#",
+  "####.",
+  "#....",
+  "#....",
+  "#....",
+}
+local function drawOrb(x0, y0, bg)
+  local N = 12
+  local R = N / 2 - 0.2
+  local cx, cy = (N - 1) / 2, (N - 1) / 2
+  local CREAM, ORANGE, RED, PBLUE = 0xF2DDB8, 0xC9803F, 0xB5442E, 0x0A2F6B
+  local function glyph(px, py)
+    local gx, gy = px - 3, py - 2
+    if gx >= 0 and gx < 5 and gy >= 0 and gy < 7 then
+      return ORB_P[gy + 1]:sub(gx + 1, gx + 1) == "#"
+    end
+    return false
+  end
+  local function pix(px, py)
+    local dx, dy = px - cx, py - cy
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > R then return nil end
+    if glyph(px, py) then return PBLUE end
+    local base = (math.sin(py * 1.6) > 0.15) and ORANGE or CREAM
+    local sx, sy = px - 8, py - 7                       -- Grande Mancha Vermelha
+    if sx * sx / 2.2 + sy * sy / 1.4 < 1 then base = RED end
+    local t = d / R                                     -- sombra nas bordas
+    return mix(base, 0x2A1A10, t * t * 0.55)
+  end
+  for cy2 = 0, N / 2 - 1 do
+    for cx2 = 0, N - 1 do
+      local a, b = pix(cx2, cy2 * 2), pix(cx2, cy2 * 2 + 1)
+      if a or b then
+        gpu.setBackground(bg)
+        if a and b then
+          gpu.setForeground(a); gpu.setBackground(b)
+          gpu.set(x0 + cx2, y0 + cy2, "▀")
+        elseif a then
+          gpu.setForeground(a)
+          gpu.set(x0 + cx2, y0 + cy2, "▀")
+        else
+          gpu.setForeground(b)
+          gpu.set(x0 + cx2, y0 + cy2, "▄")
+        end
+      end
+    end
+  end
+end
+
+local SPL = { drawn = false }
+local function splash(frac, msg)
+  local SW, SH = W, H
+  local BG = 0xF2F2F2
+  local N = 12
+  local x0 = math.floor((SW - N) / 2) + 1
+  local y0 = math.max(2, math.floor(SH / 2) - 6)
+  if not SPL.drawn then
+    SPL.drawn = true
+    gpu.setBackground(BG)
+    gpu.fill(1, 1, SW, SH, " ")
+    drawOrb(x0, y0, BG)
+    local title = "Plasma OS"
+    gpu.setBackground(BG)
+    gpu.setForeground(0x1A1A1A)
+    gpu.set(math.floor((SW - len(title)) / 2) + 1, y0 + 8, title)
+  end
+
+  -- barra fina de progresso
+  local BW = 24
+  local bx = math.floor((SW - BW) / 2) + 1
+  gpu.setBackground(BG)
+  gpu.setForeground(0xD0D0D0)
+  gpu.set(bx, y0 + 10, string.rep("▄", BW))
+  local filled = math.floor(BW * math.max(0, math.min(1, frac)))
+  if filled > 0 then
+    gpu.setForeground(0x555555)
+    gpu.set(bx, y0 + 10, string.rep("▄", filled))
+  end
+  if msg then
+    gpu.setBackground(BG)
+    gpu.fill(1, y0 + 12, SW, 1, " ")
+    gpu.setForeground(0x8A8A8A)
+    gpu.set(math.floor((SW - len(msg)) / 2) + 1, y0 + 12, msg)
+  end
+end
+
 -- Textos ----------------------------------------------------------------
 
 local T = {
@@ -569,6 +661,18 @@ local function draw()
 end
 
 -- Loop ------------------------------------------------------------------
+
+-- Tela de carregamento: confere o que o instalador vai usar
+splash(0.1, "Iniciando instalador...")
+computer.pullSignal(0.3)
+local nDisks = #listDisks()
+splash(0.45, "Procurando discos... (" .. nDisks .. ")")
+computer.pullSignal(0.3)
+local hasNet = proxyOf("internet") ~= nil
+splash(0.8, hasNet and "Rede encontrada." or "Sem placa de rede.")
+computer.pullSignal(0.3)
+splash(1, "Pronto.")
+computer.pullSignal(0.4)
 
 draw()
 while true do
