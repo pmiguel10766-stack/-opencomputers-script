@@ -67,6 +67,11 @@ local T = {
     done_title = "Instalação concluída",
     done_sub = "O computador reiniciará em %d segundos.",
     restart = "Reiniciar agora",
+    wipe_title = "Apagar disco", wipe_word = "APAGAR",
+    wipe_warn = "Tudo em \"%s\" será apagado.",
+    wipe_ask = "Digite %s para confirmar.",
+    has_init = "Já existe um /init.lua aqui; será substituído.",
+    boot_next = "O próximo boot será pelo disco %s.",
     menu_app = "Instalador", menu = "Editar   Janela   Ajuda",
   },
   en = {
@@ -92,11 +97,16 @@ local T = {
     done_title = "Installation complete",
     done_sub = "The computer will restart in %d seconds.",
     restart = "Restart now",
+    wipe_title = "Erase disk", wipe_word = "ERASE",
+    wipe_warn = "Everything on \"%s\" will be erased.",
+    wipe_ask = "Type %s to confirm.",
+    has_init = "A /init.lua already exists here; it will be replaced.",
+    boot_next = "The next boot will be from disk %s.",
     menu_app = "Installer", menu = "Edit   Window   Help",
   },
 }
 
-local STEP_OF = { welcome = 1, lang = 2, disk = 3, confirm = 4, install = 5, error = 5, done = 6 }
+local STEP_OF = { welcome = 1, lang = 2, disk = 3, confirm = 4, wipe = 4, install = 5, error = 5, done = 6 }
 
 local state = { screen = "welcome", lang = "pt" }
 local buttons = {}
@@ -326,6 +336,7 @@ local function listDisks()
         total = fs.spaceTotal(),
         used = fs.spaceUsed(),
         ro = fs.isReadOnly(),
+        hasInit = fs.exists("/init.lua"),
       })
     end
   end
@@ -415,6 +426,7 @@ local function pick(d)
   state.msg = nil
   state.dest = d.addr
   state.label = d.label
+  state.hasInit = d.hasInit
 end
 
 local function runInstall(doWipe)
@@ -425,6 +437,7 @@ local function runInstall(doWipe)
     state.doneAt = computer.uptime() + 5
     state.lastLeft = nil
     pcall(computer.beep, 880, 0.1)
+    state.bootSet = pcall(computer.setBootAddress, state.dest)
     go("done")
   else
     state.err = tostring(err)
@@ -490,9 +503,32 @@ local function drawConfirm()
   center(P.y + 3, t("confirm_title"))
   center(P.y + 5, state.label or "", C.sub)
   center(P.y + 6, t("confirm_sub"), C.sub)
-  cbtn(P.y + 8, t("wipe_yes"), true, function() runInstall(true) end)
-  cbtn(P.y + 11, t("install_only"), false, function() runInstall(false) end)
-  cbtn(P.y + 14, t("cancel"), false, function() go("disk") end)
+  if state.hasInit then center(P.y + 7, t("has_init"), C.red) end
+  cbtn(P.y + 9, t("wipe_yes"), true, function()
+    state.typed = ""
+    go("wipe")
+  end)
+  cbtn(P.y + 12, t("install_only"), false, function() runInstall(false) end)
+  cbtn(P.y + 15, t("cancel"), false, function() go("disk") end)
+end
+
+local function drawWipe()
+  local word = t("wipe_word")
+  center(P.y + 3, t("wipe_title"), C.red)
+  center(P.y + 5, t("wipe_warn", state.label or ""), C.text)
+  center(P.y + 6, t("wipe_ask", word), C.sub)
+  gpu.setBackground(C.barBg)
+  gpu.setForeground(C.text)
+  gpu.fill(P.x + 6, P.y + 8, P.w - 12, 3, " ")
+  gpu.set(P.x + 8, P.y + 9, (state.typed or "") .. "_")
+  rule()
+  local y = P.y + P.h - 4
+  button(P.x + 3, y, t("back"), false, function() go("confirm") end)
+  if (state.typed or ""):upper() == word then
+    local label = t("wipe_yes")
+    local bw = len(label) + 6
+    button(P.x + P.w - bw - 2, y, label, true, function() runInstall(true) end, bw)
+  end
 end
 
 local function drawError()
@@ -515,12 +551,15 @@ local function drawDone()
   local left = math.max(0, math.ceil(state.doneAt - computer.uptime()))
   center(P.y + 4, t("done_title"))
   center(P.y + 7, t("done_sub", left), C.sub)
+  if state.bootSet then
+    center(P.y + 9, t("boot_next", state.label or ""), C.sub)
+  end
   cbtn(P.y + 11, t("restart"), true, function() computer.shutdown(true) end)
 end
 
 local drawers = {
   welcome = drawWelcome, lang = drawLang, disk = drawDisk,
-  confirm = drawConfirm, error = drawError, done = drawDone,
+  confirm = drawConfirm, wipe = drawWipe, error = drawError, done = drawDone,
 }
 
 local function draw()
@@ -550,7 +589,17 @@ while true do
       draw()
     end
   elseif sig == "key_down" then
-    if b == 28 and state.screen == "welcome" then  -- Enter
+    if state.screen == "wipe" then
+      state.typed = state.typed or ""
+      if b == 14 then                                -- Backspace
+        state.typed = state.typed:sub(1, -2)
+      elseif b == 28 or b == 156 then                -- Enter
+        if state.typed:upper() == t("wipe_word") then runInstall(true) end
+      elseif a and a >= 32 and a < 127 and #state.typed < 12 then
+        state.typed = state.typed .. string.char(a)
+      end
+      draw()
+    elseif b == 28 and state.screen == "welcome" then  -- Enter
       go("lang")
       draw()
     end
