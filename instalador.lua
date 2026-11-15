@@ -1,4 +1,4 @@
--- Plasma OS - Instalador
+-- Plasma OS - Instalador (estilo Yosemite)
 -- Sem OpenOS. Precisa de GPU, tela, disco e placa de rede (internet card).
 
 local REPO = "https://raw.githubusercontent.com/pmiguel10766-stack/Plasma_OS/main/"
@@ -18,6 +18,19 @@ local mw, mh = gpu.maxResolution()
 gpu.setResolution(mw, mh)
 local W, H = gpu.getResolution()
 
+-- Texto com acentos: unicode.len quando existir, senão #
+local len = (unicode and unicode.len) or function(s) return #s end
+
+-- Mistura de duas cores (0xRRGGBB), sem operadores de bits (Lua 5.2)
+local function mix(c1, c2, t)
+  local r1, g1, b1 = math.floor(c1 / 65536) % 256, math.floor(c1 / 256) % 256, c1 % 256
+  local r2, g2, b2 = math.floor(c2 / 65536) % 256, math.floor(c2 / 256) % 256, c2 % 256
+  local r = math.floor(r1 + (r2 - r1) * t)
+  local g = math.floor(g1 + (g2 - g1) * t)
+  local b = math.floor(b1 + (b2 - b1) * t)
+  return r * 65536 + g * 256 + b
+end
+
 local C = {
   bg = 0xF2F2F2, panel = 0xFFFFFF, text = 0x1A1A1A, sub = 0x6E6E6E,
   blue = 0x0A84FF, barBg = 0xD6D6D6, white = 0xFFFFFF, red = 0xD93025,
@@ -27,6 +40,7 @@ local C = {
 
 local T = {
   pt = {
+    steps = { "Introdução", "Idioma", "Destino", "Tipo de instalação", "Instalação", "Resumo" },
     welcome_title = "Bem-vindo ao Plasma OS",
     welcome_sub   = "Este assistente vai instalar o Plasma OS em um disco.",
     next = "Continuar", back = "Voltar", cancel = "Cancelar",
@@ -35,7 +49,7 @@ local T = {
     readonly = "Somente leitura",
     readonly_msg = "Este disco é somente leitura.",
     no_disks = "Nenhum disco encontrado.",
-    confirm_title = "Confirmar instalação",
+    confirm_title = "Tipo de instalação",
     confirm_sub = "Você pode apagar o disco antes de instalar.",
     wipe_yes = "Apagar e instalar", install_only = "Só instalar",
     install_title = "Instalando Plasma OS",
@@ -43,12 +57,14 @@ local T = {
     no_list = "Não foi possível baixar files.txt",
     step_list = "Baixando lista de arquivos...",
     step_dl = "Baixando", step_wipe = "Apagando disco...", step_write = "Gravando",
+    time_left = "Tempo restante: cerca de %d s",
     error_title = "Erro na instalação", retry = "Tentar novamente",
     done_title = "Instalação concluída",
     done_sub = "O computador reiniciará em %d segundos.",
     restart = "Reiniciar agora",
   },
   en = {
+    steps = { "Introduction", "Language", "Destination", "Install Type", "Installation", "Summary" },
     welcome_title = "Welcome to Plasma OS",
     welcome_sub   = "This wizard will install Plasma OS on a disk.",
     next = "Continue", back = "Back", cancel = "Cancel",
@@ -57,7 +73,7 @@ local T = {
     readonly = "Read-only",
     readonly_msg = "This disk is read-only.",
     no_disks = "No disk found.",
-    confirm_title = "Confirm installation",
+    confirm_title = "Install Type",
     confirm_sub = "You can erase the disk before installing.",
     wipe_yes = "Erase and install", install_only = "Install only",
     install_title = "Installing Plasma OS",
@@ -65,6 +81,7 @@ local T = {
     no_list = "Could not download files.txt",
     step_list = "Downloading file list...",
     step_dl = "Downloading", step_wipe = "Erasing disk...", step_write = "Writing",
+    time_left = "Time remaining: about %d s",
     error_title = "Installation error", retry = "Try again",
     done_title = "Installation complete",
     done_sub = "The computer will restart in %d seconds.",
@@ -75,6 +92,7 @@ local T = {
 local state = { screen = "welcome", lang = "pt" }
 local buttons = {}
 local P = {}
+local t0 = nil  -- instante de início da instalação (para o tempo restante)
 
 local function t(k, ...)
   local s = T[state.lang][k] or k
@@ -89,21 +107,65 @@ local function fmt(n)
   return string.format("%d KB", math.floor(n / 1024))
 end
 
-local function frame()
-  gpu.setBackground(C.bg)
-  gpu.fill(1, 1, W, H, " ")
-  P.w = math.min(60, W - 4)
-  P.h = math.min(20, H - 2)
-  P.x = math.floor((W - P.w) / 2) + 1
-  P.y = math.floor((H - P.h) / 2) + 1
+local SB = 24                                     -- largura da barra lateral
+local STEP_OF = { welcome = 1, lang = 2, disk = 3, confirm = 4, install = 5, error = 5, done = 6 }
+
+local function frame(screen)
+  -- céu em degradê
+  for y = 2, H do
+    gpu.setBackground(mix(0x4A90D9, 0xCFE3F5, (y - 2) / math.max(1, H - 2)))
+    gpu.fill(1, y, W, 1, " ")
+  end
+  -- barra de menu
+  gpu.setBackground(0xE8E8E8); gpu.setForeground(C.text)
+  gpu.fill(1, 1, W, 1, " ")
+  gpu.set(2, 1, "●   Instalador   Editar   Janela   Ajuda")
+
+  -- janela
+  local ww, wh = math.min(72, W - 4), math.min(22, H - 4)
+  local wx = math.floor((W - ww) / 2) + 1
+  local wy = math.floor((H - wh) / 2) + 1
+
+  -- sombra
+  gpu.setBackground(0x1B2631)
+  gpu.fill(wx + 2, wy + wh, ww, 1, " ")
+  gpu.fill(wx + ww, wy + 1, 2, wh, " ")
+
+  -- barra de título com semáforo
+  gpu.setBackground(0xD9D9D9)
+  gpu.fill(wx, wy, ww, 1, " ")
+  gpu.setForeground(0xFF5F57); gpu.set(wx + 2, wy, "●")
+  gpu.setForeground(0xFEBC2E); gpu.set(wx + 4, wy, "●")
+  gpu.setForeground(0x28C840); gpu.set(wx + 6, wy, "●")
+  local title = "Instalar Plasma OS"
+  gpu.setForeground(C.text)
+  gpu.set(wx + math.floor((ww - len(title)) / 2), wy, title)
+
+  -- barra lateral com as etapas
+  gpu.setBackground(0xE3E7EC)
+  gpu.fill(wx, wy + 1, SB, wh - 1, " ")
+  gpu.setForeground(C.blue); gpu.set(wx + 2, wy + 2, "PLASMA OS")
+  local cur = STEP_OF[screen or state.screen]
+  for i, name in ipairs(T[state.lang].steps) do
+    local y = wy + 4 + (i - 1) * 2
+    gpu.setForeground(i == cur and C.blue or 0xA0A0A0)
+    gpu.set(wx + 2, y, i == cur and "●" or "○")
+    gpu.setForeground(i == cur and C.text or C.sub)
+    gpu.set(wx + 4, y, name)
+  end
+
+  -- painel da direita: as telas desenham dentro de P
+  P.x, P.y, P.w, P.h = wx + SB, wy + 1, ww - SB, wh - 1
   gpu.setBackground(C.panel)
   gpu.fill(P.x, P.y, P.w, P.h, " ")
+  gpu.setForeground(0xD0D0D0)                      -- linha acima dos botões
+  gpu.set(P.x, P.y + P.h - 5, string.rep("─", P.w))
 end
 
 local function center(y, s, fg)
   gpu.setBackground(C.panel)
   gpu.setForeground(fg or C.text)
-  gpu.set(P.x + math.floor((P.w - #s) / 2), y, s)
+  gpu.set(P.x + math.floor((P.w - len(s)) / 2), y, s)
 end
 
 local function bar(x, y, width, frac)
@@ -117,17 +179,17 @@ local function bar(x, y, width, frac)
 end
 
 local function button(x, y, label, primary, action, w)
-  local bw = w or (#label + 6)
+  local bw = w or (len(label) + 6)
   gpu.setBackground(primary and C.blue or C.barBg)
   gpu.setForeground(primary and C.white or C.text)
   gpu.fill(x, y, bw, 3, " ")
-  gpu.set(x + math.floor((bw - #label) / 2), y + 1, label)
+  gpu.set(x + math.floor((bw - len(label)) / 2), y + 1, label)
   table.insert(buttons, { x = x, y = y, w = bw, h = 3, action = action })
 end
 
 -- Botão centralizado no painel
 local function cbtn(y, label, primary, action)
-  local bw = #label + 8
+  local bw = len(label) + 8
   button(P.x + math.floor((P.w - bw) / 2), y, label, primary, action, bw)
 end
 
@@ -136,7 +198,7 @@ local function navButtons(backAction, label, action)
   local y = P.y + P.h - 4
   if backAction then button(P.x + 3, y, t("back"), false, backAction) end
   if label then
-    local bw = #label + 6
+    local bw = len(label) + 6
     button(P.x + P.w - bw - 2, y, label, true, action, bw)
   end
 end
@@ -153,11 +215,18 @@ end
 
 local function drawProgress(msg, frac)
   buttons = {}
-  frame()
+  frame("install")
   center(P.y + 4, t("install_title"))
   center(P.y + 8, msg, C.sub)
   bar(P.x + 4, P.y + 11, P.w - 8, frac)
   center(P.y + 13, string.format("%d%%", math.floor(frac * 100)), C.sub)
+
+  t0 = t0 or computer.uptime()
+  if frac > 0.05 then
+    local el = computer.uptime() - t0
+    local left = math.max(0, math.ceil(el / frac - el))
+    center(P.y + 15, t("time_left", left), C.sub)
+  end
 end
 
 -- Rede ------------------------------------------------------------------
@@ -294,6 +363,7 @@ end
 
 local function runInstall(doWipe)
   state.doWipe = doWipe
+  t0 = nil
   local ok, err = install(state.dest, doWipe)
   if ok then
     state.doneAt = computer.uptime() + 5
@@ -365,14 +435,15 @@ end
 local function drawError()
   center(P.y + 4, t("error_title"), C.red)
   local msg = state.err or ""
-  center(P.y + 7, msg:sub(1, P.w - 6), C.text)
-  if #msg > P.w - 6 then
-    center(P.y + 8, msg:sub(P.w - 5, 2 * (P.w - 6)), C.sub)
+  local maxw = P.w - 6
+  center(P.y + 7, msg:sub(1, maxw), C.text)
+  if len(msg) > maxw then
+    center(P.y + 8, msg:sub(maxw + 1, 2 * maxw), C.sub)
   end
   local y = P.y + P.h - 4
   button(P.x + 3, y, t("back"), false, function() go("disk") end)
   local label = t("retry")
-  local bw = #label + 6
+  local bw = len(label) + 6
   button(P.x + P.w - bw - 2, y, label, true, function() runInstall(state.doWipe) end, bw)
 end
 
