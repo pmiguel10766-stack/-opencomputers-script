@@ -1,5 +1,6 @@
--- Plasma OS - Instalador (estilo instalador do OS X Yosemite)
+-- Plasma OS - Instalador / Atualizador (estilo instalador do OS X Yosemite)
 -- Sem OpenOS. Precisa de GPU, tela, disco e placa de rede (internet card).
+-- Atualiza sem trocar a GUI e com rollback automático em caso de falha.
 
 local REPO = "https://raw.githubusercontent.com/pmiguel10766-stack/Plasma_OS/main/"
 local BOOT = computer.getBootAddress()
@@ -25,7 +26,7 @@ local C = {
   shadow = 0x59636E, rule = 0xD0D0D0,
 }
 
--- Utilidades (acentos e cores) ------------------------------------------
+-- Utilidades -------------------------------------------------------------
 
 local len = (unicode and unicode.len) or function(s) return #s end
 local function usub(s, i, j)
@@ -41,9 +42,15 @@ local function mix(c1, c2, t)
        + math.floor(b1 + (b2 - b1) * t)
 end
 
--- Tela de carregamento (logo + barra fina) ------------------------------
--- Logo: Júpiter (faixas de cor, Grande Mancha Vermelha, sombra) com um "P" azul
--- 12x12 pixels = 12x6 células com meios-blocos
+-- Chama uma função sem deixar erro derrubar o programa
+local function safe(fn, ...)
+  local ok, v = pcall(fn, ...)
+  if ok then return v end
+  return nil
+end
+
+-- Logo ------------------------------------------------------------------
+
 local ORB_P = {
   "####.",
   "#...#",
@@ -71,9 +78,9 @@ local function drawOrb(x0, y0, bg)
     if d > R then return nil end
     if glyph(px, py) then return PBLUE end
     local base = (math.sin(py * 1.6) > 0.15) and ORANGE or CREAM
-    local sx, sy = px - 8, py - 7                       -- Grande Mancha Vermelha
+    local sx, sy = px - 8, py - 7
     if sx * sx / 2.2 + sy * sy / 1.4 < 1 then base = RED end
-    local t = d / R                                     -- sombra nas bordas
+    local t = d / R
     return mix(base, 0x2A1A10, t * t * 0.55)
   end
   for cy2 = 0, N / 2 - 1 do
@@ -113,8 +120,6 @@ local function splash(frac, msg)
     gpu.setForeground(0x1A1A1A)
     gpu.set(math.floor((SW - len(title)) / 2) + 1, y0 + 8, title)
   end
-
-  -- barra fina de progresso
   local BW = 24
   local bx = math.floor((SW - BW) / 2) + 1
   gpu.setBackground(BG)
@@ -154,6 +159,7 @@ local T = {
     no_list = "Não foi possível baixar files.txt",
     step_list = "Baixando lista de arquivos...",
     step_dl = "Baixando", step_wipe = "Apagando disco...", step_write = "Gravando",
+    step_commit = "Aplicando atualização...",
     eta = "Tempo restante: cerca de %d s",
     error_title = "Erro na instalação", retry = "Tentar novamente",
     done_title = "Instalação concluída",
@@ -162,7 +168,9 @@ local T = {
     wipe_title = "Apagar disco", wipe_word = "APAGAR",
     wipe_warn = "Tudo em \"%s\" será apagado.",
     wipe_ask = "Digite %s para confirmar.",
-    has_init = "Já existe um /init.lua aqui; será substituído.",
+    has_init = "Já existe um /init.lua aqui; será atualizado.",
+    boot_warn = "Este é o disco de boot: não pode ser apagado.",
+    boot_block = "Não é possível apagar o disco de boot.",
     boot_next = "O próximo boot será pelo disco %s.",
     menu_app = "Instalador", menu = "Editar   Janela   Ajuda",
   },
@@ -184,6 +192,7 @@ local T = {
     no_list = "Could not download files.txt",
     step_list = "Downloading file list...",
     step_dl = "Downloading", step_wipe = "Erasing disk...", step_write = "Writing",
+    step_commit = "Applying update...",
     eta = "Time remaining: about %d s",
     error_title = "Installation error", retry = "Try again",
     done_title = "Installation complete",
@@ -192,7 +201,9 @@ local T = {
     wipe_title = "Erase disk", wipe_word = "ERASE",
     wipe_warn = "Everything on \"%s\" will be erased.",
     wipe_ask = "Type %s to confirm.",
-    has_init = "A /init.lua already exists here; it will be replaced.",
+    has_init = "A /init.lua already exists here; it will be updated.",
+    boot_warn = "This is the boot disk: it cannot be erased.",
+    boot_block = "The boot disk cannot be erased.",
     boot_next = "The next boot will be from disk %s.",
     menu_app = "Installer", menu = "Edit   Window   Help",
   },
@@ -211,7 +222,7 @@ local function t(k, ...)
   return s
 end
 
--- Barra de menu com RAM e bateria ---------------------------------------
+-- Barra de menu ---------------------------------------------------------
 
 local function statusCandidates()
   local total = computer.totalMemory()
@@ -224,8 +235,7 @@ local function statusCandidates()
   if maxE > 0 and maxE < math.huge then
     bat = math.floor(computer.energy() / maxE * 100 + 0.5)
   end
-  local ok, clk = pcall(os.date, "%H:%M")
-  if not ok or not clk then clk = "--:--" end
+  local clk = safe(os.date, "%H:%M") or "--:--"
   local bt = state.lang == "pt" and "Bateria" or "Battery"
   return {
     string.format("RAM: %d%%   %s: %d%%   %s", ram, bt, bat, clk),
@@ -259,10 +269,9 @@ local function fmt(n)
   return string.format("%d KB", math.floor(n / 1024))
 end
 
-local SB = 20  -- largura da barra lateral
+local SB = 20
 
 local function frame(screen)
-  -- céu em degradê
   local rows = H - 1
   local bands = math.min(24, rows)
   for b = 0, bands - 1 do
@@ -278,12 +287,10 @@ local function frame(screen)
   local wx = math.floor((W - ww) / 2) + 1
   local wy = math.floor((H - wh) / 2) + 1
 
-  -- sombra
   gpu.setBackground(C.shadow)
   gpu.fill(wx + 2, wy + wh, ww, 1, " ")
   gpu.fill(wx + ww, wy + 1, 2, wh, " ")
 
-  -- barra de título
   gpu.setBackground(C.title)
   gpu.fill(wx, wy, ww, 1, " ")
   gpu.setForeground(0xFF5F57); gpu.set(wx + 2, wy, "●")
@@ -293,7 +300,6 @@ local function frame(screen)
   gpu.setForeground(C.text)
   gpu.set(wx + math.floor((ww - len(title)) / 2), wy, title)
 
-  -- barra lateral com as etapas
   gpu.setBackground(C.side)
   gpu.fill(wx, wy + 1, SB, wh - 1, " ")
   gpu.setForeground(C.blue)
@@ -307,7 +313,6 @@ local function frame(screen)
     gpu.set(wx + 4, y, name)
   end
 
-  -- painel da direita (onde as telas desenham)
   P.x, P.y, P.w, P.h = wx + SB, wy + 1, ww - SB, wh - 1
   gpu.setBackground(C.panel)
   gpu.fill(P.x, P.y, P.w, P.h, " ")
@@ -338,20 +343,17 @@ local function button(x, y, label, primary, action, w)
   table.insert(buttons, { x = x, y = y, w = bw, h = 3, action = action })
 end
 
--- Botão centralizado no painel
 local function cbtn(y, label, primary, action)
   local bw = len(label) + 8
   button(P.x + math.floor((P.w - bw) / 2), y, label, primary, action, bw)
 end
 
--- Linha fina acima dos botões de navegação
 local function rule()
   gpu.setBackground(C.panel)
   gpu.setForeground(C.rule)
   gpu.set(P.x, P.y + P.h - 5, string.rep("─", P.w))
 end
 
--- Voltar à esquerda, avançar à direita
 local function navButtons(backAction, label, action)
   rule()
   local y = P.y + P.h - 4
@@ -417,50 +419,36 @@ end
 
 -- Discos ----------------------------------------------------------------
 
--- Chama uma função de componente sem deixar um erro do lado Java derrubar a instalação
-local function safe(fn, ...)
-  local ok, v = pcall(fn, ...)
-  if ok then return v end
-  return nil
-end
-
--- O tmpfs é o disco temporário na RAM (/tmp). O próprio computador informa o endereço dele.
--- Ele nunca é usado como destino, então é deixado de fora ANTES de qualquer outra consulta.
-local function isTmpfs(addr)
-  local tmp = safe(computer.tmpAddress)
-  if tmp and tmp == addr then return true end
-  local slot = safe(component.slot, addr)
-  if type(slot) == "number" and slot < 0 then return true end
-  return false
-end
-
--- Lista só os discos que respondem às consultas básicas
+-- Lista todos os discos reais. O disco de boot aparece marcado como "(boot)".
+-- Só o tmpfs (/tmp, na RAM) fica de fora.
 local function listDisks()
   local out = {}
+  local bootAddr = computer.getBootAddress()
+  local tmpAddr = safe(computer.tmpAddress)
   for addr in component.list("filesystem") do
-    if addr ~= BOOT and not isTmpfs(addr) then
-      local fs = safe(component.proxy, addr)
-      if fs then
-        local total = safe(fs.spaceTotal) or 0
-        local label = safe(fs.getLabel)
-        if total > 0 and label ~= "tmpfs" then
-          table.insert(out, {
-            addr = addr,
-            label = label or addr:sub(1, 8),
-            total = total,
-            used = safe(fs.spaceUsed) or 0,
-            ro = safe(fs.isReadOnly) == true,
-            hasInit = safe(fs.exists, "/init.lua") == true,
-          })
-        end
+    local fs = safe(component.proxy, addr)
+    if fs then
+      local total = safe(fs.spaceTotal) or 0
+      local label = safe(fs.getLabel) or addr:sub(1, 8)
+      local isTmp = (tmpAddr == addr) or label == "tmpfs"
+      if total > 0 and not isTmp then
+        local isBoot = (addr == bootAddr)
+        table.insert(out, {
+          addr = addr,
+          label = isBoot and (label .. " (boot)") or label,
+          total = total,
+          used = safe(fs.spaceUsed) or 0,
+          ro = safe(fs.isReadOnly) == true,
+          hasInit = safe(fs.exists, "/init.lua") == true,
+          isBoot = isBoot,
+        })
       end
     end
   end
   return out
 end
 
--- Apaga só as entradas do topo do disco, uma a uma, sem recursão.
--- Cada remoção é protegida: uma falha não interrompe a instalação.
+-- Apaga só as entradas do topo, uma a uma, sem recursão
 local function wipe(fs)
   local ok, top = pcall(fs.list, "/")
   if not ok or type(top) ~= "table" then return end
@@ -484,10 +472,85 @@ local function writeFile(fs, path, data)
   if not h then return false, err end
   local ok, werr = fs.write(h, data)
   fs.close(h)
-  return ok, werr
+  if not ok then return false, werr end
+  local size = fs.size("/" .. path)
+  if size ~= #data then return false, "tamanho incorreto (" .. tostring(size) .. ")" end
+  return true
 end
 
--- Instalação ------------------------------------------------------------
+-- Instalação segura -----------------------------------------------------
+
+-- 1) Baixa e valida TUDO antes de tocar no disco
+local function fetchAll(inet, paths)
+  local files = {}
+  for i, p in ipairs(paths) do
+    drawProgress(t("step_dl") .. " " .. p, (i - 1) / #paths * 0.5)
+    local body, derr
+    for attempt = 1, 4 do
+      body, derr = httpGet(inet, REPO .. p)
+      if body and #body > 0 then break end
+      body = nil
+      computer.pullSignal(0.5 * attempt)
+    end
+    if not body then return nil, p .. ": " .. tostring(derr or "vazio") end
+    if p:sub(-4) == ".lua" then
+      local fn, serr = load(body, "=" .. p, "t")
+      if not fn then return nil, p .. ": " .. tostring(serr) end
+    end
+    files[#files + 1] = { path = p, data = body }
+    computer.pullSignal(0.2)
+  end
+  return files
+end
+
+local function cleanupNew(fs, files)
+  for _, f in ipairs(files) do
+    safe(fs.remove, "/" .. f.path .. ".new")
+  end
+end
+
+local function rollback(fs, files, swapped)
+  for _, path in ipairs(swapped) do
+    safe(fs.remove, "/" .. path)
+    safe(fs.rename, "/" .. path .. ".bak", "/" .. path)
+  end
+  cleanupNew(fs, files)
+end
+
+-- 2) Grava como .new, depois troca com backup .bak; rollback se algo falhar
+local function commit(fs, files)
+  for i, f in ipairs(files) do
+    drawProgress(t("step_write") .. " " .. f.path, 0.5 + i / #files * 0.25)
+    local ok, err = writeFile(fs, f.path .. ".new", f.data)
+    if not ok then
+      cleanupNew(fs, files)
+      return false, f.path .. ": " .. tostring(err)
+    end
+  end
+
+  local swapped = {}
+  for i, f in ipairs(files) do
+    drawProgress(t("step_commit"), 0.75 + i / #files * 0.25)
+    local p = "/" .. f.path
+    if fs.exists(p) then
+      safe(fs.remove, p .. ".bak")
+      if not fs.rename(p, p .. ".bak") then
+        rollback(fs, files, swapped)
+        return false, f.path .. ": falha ao guardar backup"
+      end
+      swapped[#swapped + 1] = f.path
+    end
+    if not fs.rename(p .. ".new", p) then
+      rollback(fs, files, swapped)
+      return false, f.path .. ": falha ao aplicar"
+    end
+  end
+
+  for _, f in ipairs(files) do
+    safe(fs.remove, "/" .. f.path .. ".bak")
+  end
+  return true
+end
 
 local function install(dest, doWipe)
   local inet = proxyOf("internet")
@@ -504,37 +567,19 @@ local function install(dest, doWipe)
       paths[#paths + 1] = line
     end
   end
+  if #paths == 0 then return false, t("no_list") end
 
-  -- Baixa tudo e valida antes de tocar no disco
-  local files = {}
-  for i, p in ipairs(paths) do
-    drawProgress(t("step_dl") .. " " .. p, i / #paths * 0.5)
-    local body, derr
-    for attempt = 1, 3 do
-      body, derr = httpGet(inet, REPO .. p)
-      if body then break end
-      computer.pullSignal(0.5)  -- dá tempo para a placa de rede se recuperar
-    end
-    if not body then return false, p .. ": " .. tostring(derr) end
-    computer.pullSignal(0.2)    -- pequena pausa entre arquivos
-    if p:sub(-4) == ".lua" then
-      local fn, serr = load(body, "=" .. p, "t")
-      if not fn then return false, p .. ": " .. tostring(serr) end
-    end
-    files[i] = { path = p, data = body }
-  end
-
-  if doWipe then
-    drawProgress(t("step_wipe"), 0.5)
-    wipe(component.proxy(dest))
-  end
+  local files, ferr = fetchAll(inet, paths)
+  if not files then return false, ferr end
 
   local fs = component.proxy(dest)
-  for i, f in ipairs(files) do
-    drawProgress(t("step_write") .. " " .. f.path, 0.5 + i / #files * 0.5)
-    local ok, werr = writeFile(fs, f.path, f.data)
-    if not ok then return false, f.path .. ": " .. tostring(werr) end
+  if doWipe then
+    drawProgress(t("step_wipe"), 0.5)
+    wipe(fs)
   end
+
+  local ok, cerr = commit(fs, files)
+  if not ok then return false, cerr end
   return true
 end
 
@@ -542,7 +587,6 @@ end
 
 local function go(name) state.screen = name end
 
--- Clique no disco só seleciona; "Continuar" avança
 local function pick(d)
   if d.ro then
     state.msg = t("readonly_msg")
@@ -553,20 +597,34 @@ local function pick(d)
   state.dest = d.addr
   state.label = d.label
   state.hasInit = d.hasInit
+  state.isBoot = d.isBoot
 end
 
 local function runInstall(doWipe)
+  if doWipe and state.isBoot then
+    state.err = t("boot_block")
+    go("error")
+    return
+  end
   state.doWipe = doWipe
   t0 = nil
   local ok, err = install(state.dest, doWipe)
   if ok then
     state.doneAt = computer.uptime() + 5
     state.lastLeft = nil
-    pcall(computer.beep, 880, 0.1)
+    safe(computer.beep, 880, 0.1)
     state.bootSet = pcall(computer.setBootAddress, state.dest)
     go("done")
   else
     state.err = tostring(err)
+    go("error")
+  end
+end
+
+local function safeAct(fn)
+  local ok, e = pcall(fn)
+  if not ok then
+    state.err = tostring(e)
     go("error")
   end
 end
@@ -629,11 +687,17 @@ local function drawConfirm()
   center(P.y + 3, t("confirm_title"))
   center(P.y + 5, state.label or "", C.sub)
   center(P.y + 6, t("confirm_sub"), C.sub)
-  if state.hasInit then center(P.y + 7, t("has_init"), C.red) end
-  cbtn(P.y + 9, t("wipe_yes"), true, function()
-    state.typed = ""
-    go("wipe")
-  end)
+  if state.isBoot then
+    center(P.y + 7, t("boot_warn"), C.red)
+  elseif state.hasInit then
+    center(P.y + 7, t("has_init"), C.red)
+  end
+  if not state.isBoot then
+    cbtn(P.y + 9, t("wipe_yes"), true, function()
+      state.typed = ""
+      go("wipe")
+    end)
+  end
   cbtn(P.y + 12, t("install_only"), false, function() runInstall(false) end)
   cbtn(P.y + 15, t("cancel"), false, function() go("disk") end)
 end
@@ -674,7 +738,7 @@ local function drawError()
 end
 
 local function drawDone()
-  local left = math.max(0, math.ceil(state.doneAt - computer.uptime()))
+  local left = math.max(0, math.ceil((state.doneAt or 0) - computer.uptime()))
   center(P.y + 4, t("done_title"))
   center(P.y + 7, t("done_sub", left), C.sub)
   if state.bootSet then
@@ -691,12 +755,19 @@ local drawers = {
 local function draw()
   buttons = {}
   frame()
-  drawers[state.screen]()
+  local fn = drawers[state.screen] or drawWelcome
+  local ok, e = pcall(fn)
+  if not ok then
+    state.err = tostring(e)
+    state.screen = "error"
+    buttons = {}
+    frame()
+    drawError()
+  end
 end
 
 -- Loop ------------------------------------------------------------------
 
--- Tela de carregamento: confere o que o instalador vai usar
 splash(0.1, "Iniciando instalador...")
 computer.pullSignal(0.3)
 local nDisks = #listDisks()
@@ -711,7 +782,7 @@ computer.pullSignal(0.4)
 draw()
 while true do
   if state.screen == "done" then
-    local left = math.max(0, math.ceil(state.doneAt - computer.uptime()))
+    local left = math.max(0, math.ceil((state.doneAt or 0) - computer.uptime()))
     if left == 0 then computer.shutdown(true) end
     if left ~= state.lastLeft then
       state.lastLeft = left
@@ -723,24 +794,26 @@ while true do
   if sig == "touch" then
     local btn = hit(a, b)
     if btn then
-      btn.action()
+      safeAct(btn.action)
       draw()
     end
   elseif sig == "key_down" then
     if state.screen == "wipe" then
       state.typed = state.typed or ""
-      if b == 14 then                                -- Backspace
+      if b == 14 then
         state.typed = state.typed:sub(1, -2)
-      elseif b == 28 or b == 156 then                -- Enter
-        if state.typed:upper() == t("wipe_word") then runInstall(true) end
+      elseif b == 28 or b == 156 then
+        if state.typed:upper() == t("wipe_word") then
+          safeAct(function() runInstall(true) end)
+        end
       elseif a and a >= 32 and a < 127 and #state.typed < 12 then
         state.typed = state.typed .. string.char(a)
       end
       draw()
-    elseif b == 28 and state.screen == "welcome" then  -- Enter
+    elseif b == 28 and state.screen == "welcome" then
       go("lang")
       draw()
     end
   end
-  drawMenuBar()  -- mantém RAM, bateria e hora atualizadas
+  drawMenuBar()
 end
