@@ -417,19 +417,41 @@ end
 
 -- Discos ----------------------------------------------------------------
 
+-- Chama uma função de componente sem deixar um erro do lado Java derrubar a instalação
+local function safe(fn, ...)
+  local ok, v = pcall(fn, ...)
+  if ok then return v end
+  return nil
+end
+
+-- O tmpfs é o disco temporário na RAM, usado pelo próprio OpenComputers (/tmp).
+-- Ele não é um disco para instalar, então é deixado de fora da lista.
+local function isTmpfs(addr)
+  local slot = safe(component.slot, addr)
+  if type(slot) == "number" and slot < 0 then return true end
+  return false
+end
+
+-- Lista só os discos que respondem às consultas básicas
 local function listDisks()
   local out = {}
   for addr in component.list("filesystem") do
-    if addr ~= BOOT then
-      local fs = component.proxy(addr)
-      table.insert(out, {
-        addr = addr,
-        label = fs.getLabel() or addr:sub(1, 8),
-        total = fs.spaceTotal(),
-        used = fs.spaceUsed(),
-        ro = fs.isReadOnly(),
-        hasInit = fs.exists("/init.lua"),
-      })
+    if addr ~= BOOT and not isTmpfs(addr) then
+      local fs = safe(component.proxy, addr)
+      if fs then
+        local total = safe(fs.spaceTotal) or 0
+        local label = safe(fs.getLabel)
+        if total > 0 and label ~= "tmpfs" then
+          table.insert(out, {
+            addr = addr,
+            label = label or addr:sub(1, 8),
+            total = total,
+            used = safe(fs.spaceUsed) or 0,
+            ro = safe(fs.isReadOnly) == true,
+            hasInit = safe(fs.exists, "/init.lua") == true,
+          })
+        end
+      end
     end
   end
   return out
