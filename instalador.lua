@@ -1,8 +1,10 @@
 -- Plasma OS - Instalador (estilo instalador do OS X Yosemite)
 -- Sem OpenOS. Precisa de GPU, tela, disco e placa de rede (internet card).
+-- Versão com diagnóstico: linha amarela no rodapé mostra o passo atual.
 
 local REPO = "https://raw.githubusercontent.com/pmiguel10766-stack/Plasma_OS/main/"
 local BOOT = computer.getBootAddress()
+local DEBUG = true  -- coloque false para esconder a linha amarela
 
 local function proxyOf(kind)
   local addr = component.list(kind)()
@@ -24,6 +26,16 @@ local C = {
   menuBg = 0xE8E8E8, title = 0xD9D9D9, side = 0xE3E7EC,
   shadow = 0x59636E, rule = 0xD0D0D0,
 }
+
+-- Diagnóstico: escreve na última linha da tela ANTES de operações arriscadas
+local function trace(msg)
+  if not DEBUG then return end
+  gpu.setBackground(0xFFFF00)
+  gpu.setForeground(0x000000)
+  gpu.fill(1, H, W, 1, " ")
+  gpu.set(1, H, tostring(msg):sub(1, W))
+  computer.pullSignal(0.4)
+end
 
 -- Utilidades (acentos e cores) ------------------------------------------
 
@@ -510,21 +522,34 @@ local function install(dest, doWipe)
     if p:sub(-4) == ".lua" then
       local fn, serr = load(body, "=" .. p, "t")
       if not fn then return false, p .. ": " .. tostring(serr) end
+      fn = nil
     end
     files[i] = { path = p, data = body }
+    collectgarbage()
   end
+
+  trace("1 downloads ok: " .. #files .. " arquivos")
+  trace("2 RAM livre: " .. computer.freeMemory() .. " de " .. computer.totalMemory())
 
   if doWipe then
     drawProgress(t("step_wipe"), 0.5)
+    trace("3 apagando disco")
     wipe(component.proxy(dest))
   end
 
+  trace("4 abrindo disco " .. tostring(dest):sub(1, 8))
   local fs = component.proxy(dest)
+  trace("5 label=" .. tostring(safe(fs.getLabel))
+    .. " ro=" .. tostring(safe(fs.isReadOnly))
+    .. " livre=" .. tostring((safe(fs.spaceTotal) or 0) - (safe(fs.spaceUsed) or 0)))
+
   for i, f in ipairs(files) do
     drawProgress(t("step_write") .. " " .. f.path, 0.5 + i / #files * 0.5)
+    trace("6 gravando " .. f.path .. " (" .. #f.data .. " bytes)")
     local ok, werr = writeFile(fs, f.path, f.data)
     if not ok then return false, f.path .. ": " .. tostring(werr) end
   end
+  trace("7 tudo gravado")
   return true
 end
 
