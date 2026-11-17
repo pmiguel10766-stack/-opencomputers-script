@@ -525,7 +525,7 @@ local function install(dest, doWipe)
       fn = nil
     end
     files[i] = { path = p, data = body }
-    collectgarbage()
+    if collectgarbage then pcall(collectgarbage) end
   end
 
   trace("1 downloads ok: " .. #files .. " arquivos")
