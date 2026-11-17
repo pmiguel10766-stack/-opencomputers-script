@@ -424,9 +424,11 @@ local function safe(fn, ...)
   return nil
 end
 
--- O tmpfs é o disco temporário na RAM, usado pelo próprio OpenComputers (/tmp).
--- Ele não é um disco para instalar, então é deixado de fora da lista.
+-- O tmpfs é o disco temporário na RAM (/tmp). O próprio computador informa o endereço dele.
+-- Ele nunca é usado como destino, então é deixado de fora ANTES de qualquer outra consulta.
 local function isTmpfs(addr)
+  local tmp = safe(computer.tmpAddress)
+  if tmp and tmp == addr then return true end
   local slot = safe(component.slot, addr)
   if type(slot) == "number" and slot < 0 then return true end
   return false
